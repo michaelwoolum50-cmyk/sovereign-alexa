@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sovereign for Alexa+ — Agentic Workforce Demo</title>
+<style>
+  :root { --bg:#0b1020; --card:#141b33; --accent:#38e1c6; --txt:#e8ecf8; --mut:#8b93b0; }
+  * { box-sizing:border-box; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  body { background:var(--bg); color:var(--txt); margin:0; min-height:100vh; display:flex; justify-content:center; }
+  .wrap { width:min(680px,100%); padding:24px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 2px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:18px; }
+  .chat { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; min-height:300px; }
+  .msg { max-width:88%; padding:12px 14px; border-radius:14px; line-height:1.45; font-size:15px; }
+  .user { align-self:flex-end; background:#24315c; }
+  .alexa { align-self:flex-start; background:var(--card); border:1px solid #223; }
+  .alexa .who { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px; }
+  .agents { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  .agent { background:#1b2340; border:1px solid #2c3a6b; border-radius:10px; padding:8px 10px; font-size:12px; }
+  .agent .st { color:var(--accent); }
+  .agent.done .st { color:#7ee787; }
+  .lead { background:#10162c; border:1px solid #263; border-radius:10px; padding:10px 12px; margin:8px 0; font-size:13px; }
+  .lead b { color:var(--accent); }
+  .lead .meta { color:var(--mut); font-size:12px; }
+  .row { display:flex; gap:8px; }
+  input { flex:1; background:var(--card); border:1px solid #2c3a6b; color:var(--txt); border-radius:12px; padding:12px 14px; font-size:15px; }
+  button { background:var(--accent); color:#04211c; border:0; border-radius:12px; padding:12px 18px; font-weight:700; cursor:pointer; font-size:15px; }
+  button:disabled { opacity:.5; }
+  .hint { color:var(--mut); font-size:12px; margin-top:10px; }
+  .hint button { background:none; color:var(--accent); padding:2px 4px; font-size:12px; font-weight:400; }
+  .typing::after { content:"…"; animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Sovereign for Alexa+</h1>
+  <div class="sub">Simulated Alexa+ agentic experience · powered by the Sovereign MCP server (spec 2025-11-25, Streamable HTTP) · local models, zero cloud cost</div>
+  <div class="chat" id="chat"></div>
+  <div class="row">
+    <input id="q" placeholder='Try: "find me paying gigs" or "how are my apps doing?"' autocomplete="off">
+    <button id="go">Ask</button>
+  </div>
+  <div class="hint">Quick tries:
+    <button data-q="find me paying gigs I can do today">find me paying gigs</button>
+    <button data-q="how are my apps doing">app status</button>
+    <button data-q="find me work and check my apps">both</button>
+  </div>
+</div>
+<script>
+const MCP = "http://127.0.0.1:8787/mcp";
+const chat = document.getElementById("chat");
+const q = document.getElementById("q");
+const go = document.getElementById("go");
+let sid = 0;
+
+function add(cls, html, who) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerHTML = (who ? `<div class="who">${who}</div>` : "") + html;
+  chat.appendChild(d);
+  d.scrollIntoView({behavior:"smooth", block:"end"});
+  return d;
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function rpc(method, params) {
+  const r = await fetch(MCP, {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({jsonrpc:"2.0", id:++sid, method, params})});
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message);
+  return j.result;
+}
+
+async function ask(text) {
+  add("user", esc(text));
+  go.disabled = true;
+  const thinking = add("alexa", `<span class="typing">Breaking this down</span>`, "Alexa+ · Sovereign");
+  try {
+    await rpc("initialize", {protocolVersion:"2025-11-25", capabilities:{},
+      clientInfo:{name:"sovereign-demo", version:"1.0"}});
+    // Show the fan-out as it happens
+    thinking.innerHTML = `<div class="who">Alexa+ · Sovereign</div>
+      Spinning up my specialist agents in parallel…<div class="agents" id="ag"></div>`;
+    const ag = thinking.querySelector("#ag");
+    const plan = /app|build|play/i.test(text) && !/gig|work|job|money/i.test(text)
+      ? ["app_tracker"] : ["gig_finder","gig_screener","app_tracker"];
+    const chips = {};
+    plan.forEach(n => { const c=document.createElement("div"); c.className="agent";
+      c.innerHTML=`${n} <span class="st">working…</span>`; ag.appendChild(c); chips[n]=c; });
+    // stagger the "done" states for the demo feel while the real call runs
+    const res = await rpc("tools/call", {name:"orchestrate", arguments:{request:text}});
+    const data = JSON.parse(res.content[0].text);
+    data.plan.forEach((n,i)=>setTimeout(()=>{chips[n]?.classList.add("done");
+      const s=chips[n]?.querySelector(".st"); if(s) s.textContent="done";}, 400*(i+1)));
+    await new Promise(r=>setTimeout(r, 400*data.plan.length+200));
+
+    let html = `<div class="who">Alexa+ · Sovereign</div>`;
+    html += `<p>Done — ${esc(data.summary)}</p>`;
+    const gf = data.results.gig_finder;
+    if (gf && gf.ok && gf.leads) {
+      html += `<p>Here are <b>${gf.leads.length} free-to-apply gigs</b>, screened against my never-pay rails:</p>`;
+      gf.leads.forEach(l => {
+        html += `<div class="lead"><b>${esc(l.title)}</b> · ${esc(l.company)}<br>
+          <span class="meta">${esc(l.salary)} · ${(l.tags||[]).map(esc).join(", ")} ·
+          <a href="${esc(l.url)}" target="_blank" style="color:var(--accent)">view on ${esc(l.source)}</a></span></div>`;
+      });
+    }
+    const sc = data.results.gig_screener;
+    if (sc && sc.ok) html += `<p>🛡 Screening: <b>${esc(sc.verdict)}</b> — ${esc(sc.reason)}</p>`;
+    const ap = data.results.app_tracker;
+    if (ap && ap.ok) {
+      html += `<p>📱 <b>App pipeline:</b></p>`;
+      ap.apps.forEach(a => { html += `<div class="lead"><b>${esc(a.name)}</b> — ${esc(a.stage)}<br><span class="meta">${esc(a.note)}</span></div>`; });
+    }
+    thinking.innerHTML = html;
+  } catch(e) {
+    thinking.innerHTML = `<div class="who">Alexa+ · Sovereign</div>
+      <p>⚠ I couldn't reach my MCP server at <code>127.0.0.1:8787</code>.</p>
+      <p>Start it first: <code>python3 mcp_server.py</code> — then ask me again. Everything runs locally, no cloud needed.</p>`;
+  }
+  go.disabled = false;
+  thinking.scrollIntoView({behavior:"smooth", block:"end"});
+}
+
+go.onclick = () => { const t=q.value.trim(); if(t){ q.value=""; ask(t);} };
+q.onkeydown = e => { if(e.key==="Enter") go.onclick(); };
+document.querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>ask(b.dataset.q));
+add("alexa", `<p>Hi, I'm <b>Sovereign</b> — your agentic workforce. Tell me what you need done and I'll fan it out to my specialist agents in parallel.</p><p>Everything runs on your own hardware through my MCP server. Try asking me to find paying gigs.</p>`, "Alexa+ · Sovereign");
+</script>
+</body>
+</html>
